@@ -1,8 +1,6 @@
 """
 Food Label Analyzer Bot for Telegram
-Webhook version for Render – compatible with python-telegram-bot v20.x
-Uses Gemini 3 Flash Preview
-Fixed: Added .updater(None) to avoid Updater bug in Python 3.14
+Webhook version for Render – using Python 3.11 and Gemini 2.0 Flash
 """
 
 import os
@@ -17,14 +15,16 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from google import genai
 import PIL.Image
 
-# -------------------- HARDCODED CREDENTIALS (Replace with your actual keys) --------------------
+# -------------------- HARDCODED CREDENTIALS --------------------
 GEMINI_API_KEY = "AIzaSyC9PIFsB32r-9qAgapBAxvFsGgHqpGhu4Q"   # Your Gemini key
-BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   # <-- Replace with your bot token
+BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   # <-- REPLACE WITH YOUR TOKEN
 
 # -------------------- Configuration --------------------
+# Use the same stable model as your working web app
+MODEL_NAME = "gemini-2.0-flash"
+
 # Initialize Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_NAME = "gemini-3-flash-preview"
 
 # Logging
 logging.basicConfig(
@@ -37,7 +37,7 @@ app = Flask(__name__)
 
 # -------------------- Telegram Bot Setup --------------------
 bot = Bot(token=BOT_TOKEN)
-# Create the Application WITHOUT an Updater (since we're using webhooks)
+# Disable Updater for webhook mode
 application = Application.builder().bot(bot).updater(None).build()
 
 # -------------------- Async Handlers --------------------
@@ -64,7 +64,7 @@ Use bullet points, emojis, and bold text to make the answer easy to read. If any
         )
         return response.text
     except Exception as e:
-        logger.error(f"Gemini API error: {e}")
+        logger.error(f"Gemini API error: {e}", exc_info=True)
         return "❌ Sorry, I couldn't analyze the image. Please try again later."
 
 async def start(update: Update, context: CallbackContext):
@@ -98,12 +98,12 @@ async def handle_photo(update: Update, context: CallbackContext):
             parts = [analysis[i:i+4096] for i in range(0, len(analysis), 4096)]
             for part in parts:
                 await update.message.reply_text(part, parse_mode="Markdown")
-                await asyncio.sleep(0.5)  # small delay to avoid flooding
+                await asyncio.sleep(0.5)
     except Exception as e:
-        logger.error(f"Error processing photo: {e}")
+        logger.error(f"Error processing photo: {e}", exc_info=True)
         await update.message.reply_text("⚠️ Something went wrong. Please try again with a different image.")
 
-# -------------------- Register Handlers with Application --------------------
+# -------------------- Register Handlers --------------------
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -111,25 +111,25 @@ application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 # -------------------- Flask Webhook Endpoints --------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Telegram will send updates here."""
-    update = Update.de_json(request.get_json(force=True), bot)
-
-    # Process the update asynchronously
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.process_update(update))
-    loop.close()
-
+    """Telegram will send updates here. Errors are logged but we always return 200."""
+    try:
+        update = Update.de_json(request.get_json(force=True), bot)
+        # Process update asynchronously
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
+        loop.close()
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+    # Always return 200 to acknowledge receipt
     return jsonify({"status": "ok"}), 200
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint for Render."""
     return jsonify({"status": "healthy"}), 200
 
 @app.route('/set-webhook', methods=['GET'])
 def set_webhook():
-    """Helper to configure the webhook URL (call once after deployment)."""
     webhook_url = request.url_root.rstrip('/') + '/webhook'
     success = bot.set_webhook(url=webhook_url)
     if success:
