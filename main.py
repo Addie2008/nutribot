@@ -23,7 +23,7 @@ BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   #
 # -------------------- Configuration --------------------
 # Initialize Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_NAME = "gemini-3-flash-preview"
+MODEL_NAME = "gemini-2.5-flash"
 
 # Logging
 logging.basicConfig(
@@ -140,3 +140,4 @@ def set_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
