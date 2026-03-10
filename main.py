@@ -7,8 +7,9 @@ import os
 import logging
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters, CallbackContext
-from google import genai
+# NEW for v20.x
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+# Note: 'Dispatcher' is gone. 'filters' is now a module.from google import genai
 import PIL.Image
 from io import BytesIO
 import asyncio
@@ -119,4 +120,5 @@ def set_webhook():
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
+
     app.run(host='0.0.0.0', port=port)
