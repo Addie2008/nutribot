@@ -1,46 +1,60 @@
 """
 Food Label Analyzer Bot for Telegram
-Webhook version for Render deployment
+Webhook version for Render – compatible with python-telegram-bot v20.x
+Uses Gemini 3 Flash Preview
 """
 
 import os
 import logging
+import asyncio
+from io import BytesIO
+
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
-# NEW for v20.x
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-# Note: 'Dispatcher' is gone. 'filters' is now a module.from google import genai
+
+from google import genai
 import PIL.Image
-from io import BytesIO
-import asyncio
 
-# ---------- Configuration ----------
-GEMINI_API_KEY = "AIzaSyC9PIFsB32r-9qAgapBAxvFsGgHqpGhu4Q"  # Your hardcoded key
-BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"  # Replace with your token
+# -------------------- HARDCODED CREDENTIALS (Replace with your actual keys) --------------------
+GEMINI_API_KEY = "AIzaSyC9PIFsB32r-9qAgapBAxvFsGgHqpGhu4Q"   # Your Gemini key
+BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   # <-- Replace with your bot token
 
-# Initialize
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, update_queue=None, workers=4)
+# -------------------- Configuration --------------------
+# Initialize Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_NAME = "gemini-3-flash-preview"
 
-# Flask app for webhook
-app = Flask(__name__)
-
 # Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# ---------- Bot Logic ----------
-async def analyze_image_with_gemini(image_bytes):
-    """Analyze food image with Gemini"""
-    prompt = """
-You are a food analyst expert. Analyze the food product shown in the image.
-Provide: Nutri-Score (A-E), Calories per 100g/serving, Main ingredients with problematic ones highlighted,
-Nutritional highlights, Overall assessment, Recommendations.
-Use bullet points, emojis, and bold text.
-"""
+# Flask app
+app = Flask(__name__)
 
+# -------------------- Telegram Bot Setup --------------------
+bot = Bot(token=BOT_TOKEN)
+# Create the Application (replaces the old Dispatcher)
+application = Application.builder().bot(bot).build()
+
+# -------------------- Async Handlers --------------------
+async def analyze_image_with_gemini(image_bytes: bytes) -> str:
+    """Send image to Gemini and return analysis."""
+    prompt = """
+You are a food analyst expert. Analyze the food product shown in the image (label or package).
+Provide the following information in a clear, nicely formatted way:
+
+- **Nutri-Score** (A, B, C, D, or E) based on European standards, with a brief explanation.
+- **Calories**: per 100g/ml and per typical serving (if visible).
+- **Main ingredients** list, highlighting any problematic ones (e.g., high sugar, saturated fat, salt, additives, E-numbers, allergens). Explain why they might be concerning.
+- **Nutritional highlights** (e.g., high fiber, protein, vitamins) if any.
+- **Overall assessment**: a short summary of the product's healthiness.
+- **Recommendations**: suggestions for healthier alternatives or consumption tips.
+
+Use bullet points, emojis, and bold text to make the answer easy to read. If any information is missing from the label, state that it's not visible.
+"""
     try:
         image = PIL.Image.open(BytesIO(image_bytes))
         response = client.models.generate_content(
@@ -60,19 +74,22 @@ async def start(update: Update, context: CallbackContext):
 
 async def help_command(update: Update, context: CallbackContext):
     await update.message.reply_text(
-        "📸 Just send a clear photo of the food label. I'll do the rest!"
+        "📸 Just send a clear photo of the food label (ingredients, nutrition facts, front package). "
+        "I'll do the rest!"
     )
 
 async def handle_photo(update: Update, context: CallbackContext):
-    """Process incoming photo messages"""
+    """Process incoming photo messages."""
     await update.message.reply_text("🔍 Analyzing the image... This may take a few seconds.")
 
     try:
+        # Get the largest photo
         photo_file = await update.message.photo[-1].get_file()
         image_bytes = await photo_file.download_as_bytearray()
-        
-        analysis = await analyze_image_with_gemini(bytes(image_bytes))
-        
+        image_bytes = bytes(image_bytes)
+
+        analysis = await analyze_image_with_gemini(image_bytes)
+
         # Telegram message limit is 4096 characters
         if len(analysis) <= 4096:
             await update.message.reply_text(analysis, parse_mode="Markdown")
@@ -80,45 +97,46 @@ async def handle_photo(update: Update, context: CallbackContext):
             parts = [analysis[i:i+4096] for i in range(0, len(analysis), 4096)]
             for part in parts:
                 await update.message.reply_text(part, parse_mode="Markdown")
+                await asyncio.sleep(0.5)  # small delay to avoid flooding
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text("⚠️ Something went wrong. Please try again.")
+        logger.error(f"Error processing photo: {e}")
+        await update.message.reply_text("⚠️ Something went wrong. Please try again with a different image.")
 
-# Register handlers
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("help", help_command))
-dispatcher.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+# -------------------- Register Handlers with Application --------------------
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-# ---------- Webhook Endpoint ----------
+# -------------------- Flask Webhook Endpoints --------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Endpoint for Telegram to send updates"""
+    """Telegram will send updates here."""
     update = Update.de_json(request.get_json(force=True), bot)
-    
-    # Process update asynchronously
+
+    # Process the update asynchronously
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(dispatcher.process_update(update))
+    loop.run_until_complete(application.process_update(update))
     loop.close()
-    
+
     return jsonify({"status": "ok"}), 200
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint for Render"""
+    """Health check endpoint for Render."""
     return jsonify({"status": "healthy"}), 200
 
 @app.route('/set-webhook', methods=['GET'])
 def set_webhook():
-    """Helper endpoint to set the webhook URL"""
+    """Helper to configure the webhook URL (call once after deployment)."""
     webhook_url = request.url_root.rstrip('/') + '/webhook'
     success = bot.set_webhook(url=webhook_url)
     if success:
-        return f"Webhook set to {webhook_url}", 200
+        return f"✅ Webhook set to {webhook_url}", 200
     else:
-        return "Failed to set webhook", 500
+        return "❌ Failed to set webhook", 500
 
+# -------------------- Main --------------------
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
-
     app.run(host='0.0.0.0', port=port)
