@@ -2,6 +2,7 @@
 Food Label Analyzer Bot for Telegram
 Webhook version for Render – compatible with python-telegram-bot v20.x
 Uses Gemini 3 Flash Preview
+Fixed: Added .updater(None) to avoid Updater bug in Python 3.14
 """
 
 import os
@@ -23,7 +24,7 @@ BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   #
 # -------------------- Configuration --------------------
 # Initialize Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3-flash-preview"
 
 # Logging
 logging.basicConfig(
@@ -36,8 +37,8 @@ app = Flask(__name__)
 
 # -------------------- Telegram Bot Setup --------------------
 bot = Bot(token=BOT_TOKEN)
-# Create the Application (replaces the old Dispatcher)
-application = Application.builder().bot(bot).build()
+# Create the Application WITHOUT an Updater (since we're using webhooks)
+application = Application.builder().bot(bot).updater(None).build()
 
 # -------------------- Async Handlers --------------------
 async def analyze_image_with_gemini(image_bytes: bytes) -> str:
@@ -140,4 +141,3 @@ def set_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-
