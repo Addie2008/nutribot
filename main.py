@@ -20,8 +20,7 @@ GEMINI_API_KEY = "AIzaSyC9PIFsB32r-9qAgapBAxvFsGgHqpGhu4Q"   # Your Gemini key
 BOT_TOKEN = "8654917593:AAH-sf5eyJ7Kjl-8EhtvCFk3P0ML3bPqgLU"                   # <-- REPLACE WITH YOUR TOKEN
 
 # -------------------- Configuration --------------------
-# Use the same stable model as your working web app
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-2.0-flash"  # Stable model
 
 # Initialize Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -39,6 +38,9 @@ app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
 # Disable Updater for webhook mode
 application = Application.builder().bot(bot).updater(None).build()
+
+# IMPORTANT: Initialize the application before using it
+application.initialize()
 
 # -------------------- Async Handlers --------------------
 async def analyze_image_with_gemini(image_bytes: bytes) -> str:
@@ -130,12 +132,21 @@ def health():
 
 @app.route('/set-webhook', methods=['GET'])
 def set_webhook():
+    """Helper to configure the webhook URL (call once after deployment)."""
     webhook_url = request.url_root.rstrip('/') + '/webhook'
-    success = bot.set_webhook(url=webhook_url)
-    if success:
-        return f"✅ Webhook set to {webhook_url}", 200
-    else:
-        return "❌ Failed to set webhook", 500
+    # set_webhook is asynchronous, so we need to run it in an event loop
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(bot.set_webhook(url=webhook_url))
+        loop.close()
+        if success:
+            return f"✅ Webhook set to {webhook_url}", 200
+        else:
+            return "❌ Failed to set webhook", 500
+    except Exception as e:
+        logger.error(f"Error setting webhook: {e}", exc_info=True)
+        return f"❌ Error: {str(e)}", 500
 
 # -------------------- Main --------------------
 if __name__ == "__main__":
